@@ -109,11 +109,10 @@ function launchState(q=state.q){const p=endPoint(q),b=q[1],nx=Math.cos(b),ny=-Ma
 function hitPrediction(p){let t=(-p.vy+Math.sqrt(p.vy*p.vy+2*PH.g*(PH.h-p.y)))/PH.g;if(!Number.isFinite(t)||t<0)t=0;return {x:p.x+p.vx*t,t,dx:p.vx*t}}
 function fmt(v){return Number(v).toFixed(2)}
 function speak(){} // Gameplay is intentionally free of text notifications.
-// A stroke applies a rightward horizontal impulse at the seat. The virtual
-// work is W = Fx * vx * dt * positionEfficiency * recovery, which is NEGATIVE
-// if the seat is moving against the stroke. We solve the impulse exactly for
-// that prescribed W, rather than awarding the always-positive J^2/2M term
-// that made 20 rapid taps unconditionally increase the energy in v0.3.
+// A stroke follows the horizontal direction in which the seat is already moving.
+// Near the bottom of the swing, a rightward stroke boosts rightward motion and
+// a leftward stroke boosts leftward motion. Work stays positive in both cases.
+// Stationary seats receive no energy, and rapid taps lose effectiveness.
 function clamp(v,lo=0,hi=1){return Math.max(lo,Math.min(hi,v))}
 function pumpConditions(q=state.q,elapsed=state.simTime-state.lastKick){
  const p=seatPoint(q),downwardness=p.y/(PH.l1+PH.l2);
@@ -122,20 +121,16 @@ function pumpConditions(q=state.q,elapsed=state.simTime-state.lastKick){
  // A hard stroke takes time to reset: quick taps still consume one attempt.
  const recovery=clamp((elapsed-.20)/.86);
  const direction=p.vx;
- // Rider strokes become less effective at very high pendulum energy.
- // This smoothly softens pumping rather than artificially clamping angles.
- // A finite amount of work can be performed in a single body movement.
+ // The player pushes *with* the current direction of travel, not always right.
+ // Positive work at either sign of vx: W = F * dt * |vx| * efficiency.
  const totalEnergy=energy(q);
  const effort=1/(1+Math.pow(totalEnergy/PH.energyScale,3));
- const suppliedWork=PH.pumpForce*PH.strokeTime*direction*phase*recovery*effort;
- const rawWork=Math.sign(suppliedWork)*Math.min(PH.maxStrokeWork,Math.abs(suppliedWork));
- // A single horizontal impulse cannot remove more than the kinetic energy in
- // the controlled seat velocity mode. Apply a safety margin to prevent reversal.
+ const suppliedWork=PH.pumpForce*PH.strokeTime*Math.abs(direction)*phase*recovery*effort;
+ const work=Math.min(PH.maxStrokeWork,suppliedWork);
+ // Exact effective mass of a horizontal impulse applied at the seat.
  const [a,b]=q,{diag1,diag2,c,det}=matrix(q),J1=PH.l1*Math.cos(a),J2=PH.l2*Math.cos(b);
  const response1=(diag2*J1-c*J2)/det,response2=(diag1*J2-c*J1)/det;
  const invMass=J1*response1+J2*response2;
- const removable=direction<0?.82*direction*direction/(2*invMass):Infinity;
- const work=direction<0?Math.max(rawWork,-removable):rawWork;
  return {phase,recovery,direction,work,J1,J2,response1,response2,invMass};
 }
 function pump(){if(state.phase!=='swing'||state.kick>=MAX)return;
@@ -144,10 +139,12 @@ function pump(){if(state.phase!=='swing'||state.kick>=MAX)return;
  if(gap<.075)return;
  const before=energy(state.q),c=pumpConditions();
  let impulse=0;
- if(Math.abs(c.work)>1e-10 && Math.abs(c.direction)>1e-8){
-   const root=Math.sqrt(Math.max(0,c.direction*c.direction+2*c.invMass*c.work));
-   // Choose the non-reversing impulse branch: positive for forward/retrograde strokes.
-   impulse=c.direction>0?2*c.work/(c.direction+root):2*c.work/(c.direction-root);
+ if(c.work>1e-10 && Math.abs(c.direction)>1e-8){
+   // Delta E = J*vx + 0.5*J^2*invMass. Solve for the impulse that
+   // supplies the desired work *along the instantaneous travel direction*.
+   const speed=Math.abs(c.direction);
+   const root=Math.sqrt(speed*speed+2*c.invMass*c.work);
+   impulse=Math.sign(c.direction)*2*c.work/(speed+root);
    state.q[2]+=impulse*c.response1;
    state.q[3]+=impulse*c.response2;
  }
