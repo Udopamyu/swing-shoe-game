@@ -80,7 +80,7 @@ const $=id=>document.getElementById(id);
 const canvas=$('game'),ctx=canvas.getContext('2d');
 const BASE_W=960,BASE_H=540, TAU=Math.PI*2;
 let W=BASE_W,H=BASE_H;
-const PH={l1:2.28,l2:2.10,leg:.38,m1:6.00,m2:1.80,g:9.81,h:5.35,d1:.14,d2:.08,air1:.24,air2:.08,pumpForce:66,strokeTime:.24,maxStrokeWork:34,energyScale:145,footKick:2.40};
+const PH={l1:2.28,l2:2.10,leg:.38,m1:6.00,m2:1.80,g:9.81,h:5.35,d1:.14,d2:.08,air1:.12,air2:.04,pumpForce:66,strokeTime:.24,maxStrokeWork:34,energyScale:145,footKick:2.40};
 const MAX=10,SCALE=74;
 let PIVOT_PX=270,PIVOT_PY=62;
 const stars=Array.from({length:84},(_,i)=>({x:((i*3571+373)%937)+12,y:((i*2039+107)%285)+11,r:.6+((i*13)%12)/15,phase:(i%11)*.53}));
@@ -109,6 +109,98 @@ function launchState(q=state.q){const p=endPoint(q),b=q[1],nx=Math.cos(b),ny=-Ma
 function hitPrediction(p){let t=(-p.vy+Math.sqrt(p.vy*p.vy+2*PH.g*(PH.h-p.y)))/PH.g;if(!Number.isFinite(t)||t<0)t=0;return {x:p.x+p.vx*t,t,dx:p.vx*t}}
 function fmt(v){return Number(v).toFixed(2)}
 function speak(){} // Gameplay is intentionally free of text notifications.
+// Self-contained procedural SFX: no external audio files or network needed.
+// Web Audio begins only after a real user interaction (mobile autoplay policy).
+const SFX={ctx:null,bus:null,noise:null,lastWhoosh:-10,fastZone:false,enabled:true};
+function ensureAudio(){
+  try{
+    if(!SFX.enabled)return false;
+    if(!SFX.ctx){
+      const AC=window.AudioContext||window.webkitAudioContext;
+      if(!AC)return false;
+      const ac=new AC();
+      const limiter=ac.createDynamicsCompressor();
+      limiter.threshold.value=-17;limiter.knee.value=12;limiter.ratio.value=5;
+      limiter.attack.value=.004;limiter.release.value=.18;
+      const bus=ac.createGain();bus.gain.value=.55;
+      bus.connect(limiter);limiter.connect(ac.destination);
+      const count=Math.max(2048,Math.floor(ac.sampleRate*1.2));
+      const noise=ac.createBuffer(1,count,ac.sampleRate),data=noise.getChannelData(0);
+      for(let i=0;i<count;i++)data[i]=Math.random()*2-1;
+      SFX.ctx=ac;SFX.bus=bus;SFX.noise=noise;
+    }
+    if(SFX.ctx.state==='suspended')SFX.ctx.resume().catch(()=>{});
+    return SFX.ctx.state!=='closed';
+  }catch{return false}
+}
+function sfxTone(type,fStart,fEnd,duration,volume,attack=.012,when=0){
+  if(!SFX.ctx||!SFX.bus)return;
+  const ac=SFX.ctx,t=ac.currentTime+when,osc=ac.createOscillator(),g=ac.createGain();
+  osc.type=type;
+  osc.frequency.setValueAtTime(Math.max(24,fStart),t);
+  osc.frequency.exponentialRampToValueAtTime(Math.max(24,fEnd),t+duration);
+  g.gain.setValueAtTime(.0001,t);
+  g.gain.exponentialRampToValueAtTime(Math.max(.0002,volume),t+Math.min(attack,duration*.35));
+  g.gain.exponentialRampToValueAtTime(.0001,t+duration);
+  osc.connect(g);g.connect(SFX.bus);
+  osc.start(t);osc.stop(t+duration+.025);
+  osc.onended=()=>{try{osc.disconnect();g.disconnect()}catch{}};
+}
+function sfxAir(freqFrom,freqTo,duration,volume,attack=.012,q=.64,when=0){
+  if(!SFX.ctx||!SFX.bus||!SFX.noise)return;
+  const ac=SFX.ctx,t=ac.currentTime+when,src=ac.createBufferSource();
+  const filter=ac.createBiquadFilter(),g=ac.createGain();
+  src.buffer=SFX.noise;filter.type='bandpass';filter.Q.value=q;
+  filter.frequency.setValueAtTime(Math.max(70,freqFrom),t);
+  filter.frequency.exponentialRampToValueAtTime(Math.max(70,freqTo),t+duration);
+  g.gain.setValueAtTime(.0001,t);
+  g.gain.exponentialRampToValueAtTime(Math.max(.0002,volume),t+Math.min(attack,duration*.4));
+  g.gain.exponentialRampToValueAtTime(.0001,t+duration);
+  src.connect(filter);filter.connect(g);g.connect(SFX.bus);
+  src.start(t);src.stop(t+duration+.025);
+  src.onended=()=>{try{src.disconnect();filter.disconnect();g.disconnect()}catch{}};
+}
+function soundPump(){
+  // シュッ: short airy sweep with a little pitch movement.
+  if(!ensureAudio())return;
+  sfxAir(2400,610,.16,.19,.009,.7);
+  sfxTone('triangle',380,185,.12,.065,.006);
+}
+function soundWhoosh(speed){
+  // フォン: longer rush as the swing passes near the bottom at high speed.
+  if(!SFX.ctx||SFX.ctx.state!=='running')return;
+  const strength=clamp((speed-4.0)/13);
+  const dur=.22+strength*.20;
+  sfxAir(930+strength*1050,240+strength*380,dur,.14+strength*.20,.04,.50);
+  sfxTone('sine',115+strength*75,55+strength*30,dur*.85,.045+strength*.055,.026);
+}
+function soundThrow(speed){
+  // ポーーン: round, playful tonal sweep with a brief pluck.
+  if(!ensureAudio())return;
+  const extra=clamp(speed/26);
+  sfxTone('sine',575+extra*130,252+extra*55,.57,.34,.008);
+  sfxTone('triangle',840+extra*110,390+extra*60,.25,.13,.006);
+  sfxTone('sine',337+extra*80,270+extra*40,.66,.10,.010,.015);
+}
+function soundImpact(speed){
+  // ドゴーン: deep descending boom, thump and short gritty impact.
+  if(!SFX.ctx||SFX.ctx.state!=='running')return;
+  const strength=clamp(speed/30);
+  sfxTone('sine',151+strength*48,42,.76,.34+strength*.14,.009);
+  sfxTone('triangle',106,38,.47,.15+strength*.07,.006);
+  sfxAir(2500,430,.10,.18+strength*.06,.003,.65);
+  sfxAir(570,115,.53,.19+strength*.11,.008,.60,.024);
+}
+function updateSwingWhoosh(){
+  const seat=seatPoint(),speed=Math.hypot(seat.vx,seat.vy);
+  const bottom=seat.y/(PH.l1+PH.l2);
+  const fastZone=speed>4.5&&bottom>.69;
+  if(fastZone&&!SFX.fastZone&&state.simTime-SFX.lastWhoosh>.48){
+    soundWhoosh(speed);
+    SFX.lastWhoosh=state.simTime;
+  }
+  SFX.fastZone=fastZone;
+}
 // A stroke follows the horizontal direction in which the seat is already moving.
 // Near the bottom of the swing, a rightward stroke boosts rightward motion and
 // a leftward stroke boosts leftward motion. Work stays positive in both cases.
@@ -137,6 +229,7 @@ function pump(){if(state.phase!=='swing'||state.kick>=MAX)return;
  const gap=state.simTime-state.lastKick;
  // Mechanical switch debounce only; inputs closer than this are one touch.
  if(gap<.075)return;
+ soundPump();
  const before=energy(state.q),c=pumpConditions();
  let impulse=0;
  if(c.work>1e-10 && Math.abs(c.direction)>1e-8){
@@ -154,11 +247,11 @@ function pump(){if(state.phase!=='swing'||state.kick>=MAX)return;
  updateControls();
 }
 function shoot(){if(state.phase!=='swing'||state.kick!==MAX)return;
- const p=launchState();state.shoe={x:p.x,y:p.y,vx:p.vx,vy:p.vy,angle:Math.atan2(p.vy,p.vx),startX:p.x,startY:p.y,baseSpeed:p.baseSpeed,footKick:PH.footKick};
+ const p=launchState();soundThrow(p.speed);state.shoe={x:p.x,y:p.y,vx:p.vx,vy:p.vy,angle:Math.atan2(p.vy,p.vx),startX:p.x,startY:p.y,baseSpeed:p.baseSpeed,footKick:PH.footKick};
  state.phase='flying';state.trail=[{x:p.x,y:p.y}];state.announced=false;state.peakSpeed=p.speed;
  updateControls();
 }
-function reset(){state=initial();accumulator=0;lastFrame=0;
+function reset(){state=initial();accumulator=0;lastFrame=0;SFX.lastWhoosh=-10;SFX.fastZone=false;
  $('result').classList.remove('show');$('result').setAttribute('aria-hidden','true');
  updateControls();render(now);
 }
@@ -188,7 +281,7 @@ function land(){
  const s=state.shoe;state.phase='landed';state.landing=s.x-s.startX;
  state.crater={x:s.x,width:0.37+Math.min(1.50,Math.sqrt(Math.abs(state.landing))*.125),depth:.10+Math.min(.53,Math.sqrt(Math.abs(state.landing))*.047),time:state.simTime};
  state.shake=7+Math.min(18,Math.abs(state.landing)*.17);
- state.impactSpeed=Math.hypot(s.vx,s.vy);spawnDust();
+ state.impactSpeed=Math.hypot(s.vx,s.vy);soundImpact(state.impactSpeed);spawnDust();
  const distance=state.landing,positive=Math.max(0,distance),record=positive>best+.00001;
  if(record)setBest(positive);
  $('resultDistance').textContent=(distance>=0?'+':'')+fmt(distance)+' m';
@@ -205,6 +298,7 @@ function step(dt){state.simTime+=dt;state.q=rk4(state.q,dt);
  // Both links remain free to rotate; quadratic drag softens runaway speeds.
  state.q[2]=Math.max(-29,Math.min(29,state.q[2]));state.q[3]=Math.max(-42,Math.min(42,state.q[3]));
  if(state.simTime-state.lastTrailTime>.033){const sp=seatPoint();state.seatTrail.push({x:sp.x,y:sp.y,t:state.simTime});state.lastTrailTime=state.simTime;if(state.seatTrail.length>165)state.seatTrail.shift()}
+ if(state.phase==='swing')updateSwingWhoosh();
  if(state.phase==='flying'){
    const p=state.shoe,ox=p.x,oy=p.y,ovy=p.vy;
    p.x+=p.vx*dt;p.y+=ovy*dt+.5*PH.g*dt*dt;p.vy+=PH.g*dt;
