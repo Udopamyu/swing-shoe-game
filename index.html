@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#081427">
+<meta name="description" content="二重振り子ブランコ靴飛ばし。10回漕いで靴を射出！飛距離を競う無料ブラウザゲーム。">
+<title>二重振り子ブランコ靴飛ばし</title>
+<style>
+:root{color-scheme:dark;--bg:#081427;--cyan:#71e7ee;--orange:#ffab71;--text:#f2f8ff}
+*{box-sizing:border-box}
+html,body{margin:0;width:100%;height:100%;overflow:hidden;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,"Hiragino Kaku Gothic ProN","Noto Sans JP",sans-serif}
+body{background:var(--bg);overscroll-behavior:none}
+.shell{position:fixed;inset:0;width:100%;height:100%;height:100dvh;margin:0;padding:0;display:block;overflow:hidden}
+.stage{position:absolute;inset:0;width:100%;height:100%;overflow:hidden;background:#132941;border:0;border-radius:0;box-shadow:none}
+canvas{display:block;width:100%;height:100%;touch-action:none}
+.controls{position:absolute;z-index:3;bottom:calc(16px + env(safe-area-inset-bottom,0px));left:50%;transform:translateX(-50%);display:grid;grid-template-columns:1fr 1fr;gap:14px;width:min(620px,calc(100% - 28px));transition:opacity .2s}
+.controls.hidden{visibility:hidden;pointer-events:none}
+button,a.share{font:inherit;cursor:pointer;-webkit-tap-highlight-color:transparent;touch-action:manipulation;user-select:none}
+.action{height:76px;border:0;border-radius:18px;font-size:clamp(20px,3.7vw,28px);font-weight:900;letter-spacing:.03em;display:flex;align-items:center;justify-content:center;gap:12px;box-shadow:0 7px 0 #0004,0 12px 22px #0004;transition:transform .12s,filter .14s,opacity .14s}
+.action:active:not(:disabled){transform:translateY(4px);box-shadow:0 3px 0 #0004}
+.pump{background:linear-gradient(150deg,#91f3f4,#39cede);color:#062a36}
+.shoot{background:linear-gradient(150deg,#ffca96,#ff995b);color:#4b2214}
+.action:disabled{opacity:.28;filter:grayscale(.7);cursor:default;box-shadow:0 4px 14px #0003}
+.count{font-size:13px;font-weight:850;opacity:.68;min-width:40px;white-space:nowrap}
+.result-overlay{position:absolute;z-index:4;inset:0;display:flex;align-items:center;justify-content:center;padding:15px;background:#0613246b;backdrop-filter:blur(1.5px);opacity:0;visibility:hidden;pointer-events:none;transition:opacity .25s ease,visibility .25s ease}
+.result-overlay.show{opacity:1;visibility:visible;pointer-events:auto}
+.result-card{width:min(420px,94%);padding:24px 22px 22px;border:1px solid #acd1ec57;border-radius:22px;background:#0a1b31e8;box-shadow:0 14px 60px #061121aa;text-align:center;display:flex;flex-direction:column;align-items:center;gap:15px}
+.result-distance{font-size:clamp(36px,7vw,62px);font-weight:950;letter-spacing:-.045em;color:#ffc08a;line-height:1.1;font-variant-numeric:tabular-nums;white-space:nowrap}
+.record{color:#89fff1;font-size:13px;font-weight:900;letter-spacing:.18em}
+.record[hidden]{display:none}
+.result-actions{display:grid;grid-template-columns:1fr 1fr;gap:11px;width:100%}
+.result-actions a,.result-actions button{display:flex;align-items:center;justify-content:center;min-height:56px;border:0;border-radius:12px;text-decoration:none;font-size:15px;font-weight:850;white-space:nowrap;transition:transform .1s,filter .14s}
+.result-actions a:active,.result-actions button:active{transform:scale(.975)}
+.share{background:#edf7ff;color:#06111e}
+.again{background:#ffb27c;color:#3b1e12}
+.result-actions a:hover,.result-actions button:hover{filter:brightness(1.08)}
+.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap}
+@media(max-width:700px){
+ .controls{gap:10px;width:calc(100% - 26px);bottom:calc(14px + env(safe-area-inset-bottom,0px))}
+ .action{height:70px;border-radius:14px;font-size:21px;gap:8px}
+ .count{font-size:12px}
+ .result-card{padding:15px 13px;gap:9px;border-radius:15px}
+ .result-distance{font-size:clamp(32px,9vw,46px)}
+ .result-actions{gap:8px}
+ .result-actions a,.result-actions button{min-height:45px;font-size:13px}
+}
+@media(max-height:530px) and (orientation:landscape){
+ .controls{width:min(520px,calc(100% - 28px));bottom:calc(7px + env(safe-area-inset-bottom,0px))}
+ .action{height:54px}
+ .result-card{padding:12px;gap:8px}
+}
+</style>
+</head>
+<body>
+<main class="shell">
+  <section class="stage" aria-label="二重振り子ブランコ靴飛ばし">
+    <canvas id="game" width="960" height="540" aria-label="ブランコと靴の動くゲーム画面"></canvas>
+    <div class="result-overlay" id="result" aria-live="polite" aria-hidden="true">
+      <div class="result-card">
+        <div id="newRecord" class="record" hidden>NEW RECORD!</div>
+        <div id="resultDistance" class="result-distance">0.00 m</div>
+        <div class="result-actions">
+          <a id="share" class="share" href="https://twitter.com/intent/tweet" target="_blank" rel="noopener noreferrer">𝕏 で共有</a>
+          <button id="again" class="again" type="button">もう一度</button>
+        </div>
+      </div>
+    </div>
+  </section>
+  <div class="controls" id="controls">
+    <button id="pump" class="action pump" type="button" aria-label="漕ぐ"><span>漕ぐ</span><span class="count" id="strokeCount">0/10</span></button>
+    <button id="throw" class="action shoot" type="button" disabled>射出</button>
+  </div>
+  <p class="sr-only">スペースキーで漕ぐ、10回漕いだらEnterキーで射出、Rキーで再挑戦できます。</p>
+</main>
+<script>
+
+(()=>{'use strict';
+const $=id=>document.getElementById(id);
+const canvas=$('game'),ctx=canvas.getContext('2d');
+const BASE_W=960,BASE_H=540, TAU=Math.PI*2;
+let W=BASE_W,H=BASE_H;
+const PH={l1:2.28,l2:2.10,leg:.38,m1:6.00,m2:1.80,g:9.81,h:5.35,d1:.14,d2:.08,air1:.24,air2:.08,pumpForce:66,strokeTime:.24,maxStrokeWork:34,energyScale:145,footKick:2.40};
+const MAX=10,SCALE=74;
+let PIVOT_PX=270,PIVOT_PY=62;
+const stars=Array.from({length:84},(_,i)=>({x:((i*3571+373)%937)+12,y:((i*2039+107)%285)+11,r:.6+((i*13)%12)/15,phase:(i%11)*.53}));
+let state,lastFrame=0,accumulator=0,now=0,dpr=1;
+function initial(){return{q:[-.59+(Math.random()-.5)*.10,-.79+(Math.random()-.5)*.14,.12,-.09],kick:0,phase:'swing',lastKick:-10,shoe:null,cam:0,camY:0,trail:[],seatTrail:[],lastTrailTime:0,flash:null,simTime:0,announced:false,landing:null,crater:null,dust:[],shake:0,peakSpeed:0,pumpStats:{}}}
+function safeBest(){try{return Number(localStorage.getItem('swing_shot_best_v06'))||0}catch{return 0}}
+let best=safeBest();
+function setBest(n){best=n;try{localStorage.setItem('swing_shot_best_v06',String(n))}catch{}}
+function matrix(q){const [a,b]=q,d=a-b,diag1=(PH.m1+PH.m2)*PH.l1*PH.l1,diag2=PH.m2*PH.l2*PH.l2,c=PH.m2*PH.l1*PH.l2*Math.cos(d),det=diag1*diag2-c*c;return{diag1,diag2,c,det}}
+function deriv(q){const[a,b,wa,wb]=q,d=a-b,{diag1,diag2,c,det}=matrix(q);
+ const f1=-PH.m2*PH.l1*PH.l2*Math.sin(d)*wb*wb-(PH.m1+PH.m2)*PH.g*PH.l1*Math.sin(a)-PH.d1*wa-PH.air1*wa*Math.abs(wa);
+ const f2= PH.m2*PH.l1*PH.l2*Math.sin(d)*wa*wa-PH.m2*PH.g*PH.l2*Math.sin(b)-PH.d2*wb-PH.air2*wb*Math.abs(wb);
+ return[wa,wb,(f1*diag2-f2*c)/det,(f2*diag1-f1*c)/det]}
+function rk4(q,dt){const a=deriv(q),b=deriv(q.map((v,i)=>v+a[i]*dt/2)),c=deriv(q.map((v,i)=>v+b[i]*dt/2)),d=deriv(q.map((v,i)=>v+c[i]*dt));return q.map((v,i)=>v+dt*(a[i]+2*b[i]+2*c[i]+d[i])/6)}
+function energy(q){const[a,b,wa,wb]=q,{diag1,diag2,c}=matrix(q);return .5*(diag1*wa*wa+2*c*wa*wb+diag2*wb*wb)+(PH.m1+PH.m2)*PH.g*PH.l1*(1-Math.cos(a))+PH.m2*PH.g*PH.l2*(1-Math.cos(b))}
+function seatPoint(q=state.q){const[a,b,wa,wb]=q;return{x:PH.l1*Math.sin(a)+PH.l2*Math.sin(b),y:PH.l1*Math.cos(a)+PH.l2*Math.cos(b),vx:PH.l1*Math.cos(a)*wa+PH.l2*Math.cos(b)*wb,vy:-PH.l1*Math.sin(a)*wa-PH.l2*Math.sin(b)*wb}}
+function endPoint(q=state.q){const[a,b,wa,wb]=q,L=PH.l2+PH.leg;return{x:PH.l1*Math.sin(a)+L*Math.sin(b),y:PH.l1*Math.cos(a)+L*Math.cos(b),vx:PH.l1*Math.cos(a)*wa+L*Math.cos(b)*wb,vy:-PH.l1*Math.sin(a)*wa-L*Math.sin(b)*wb}}
+// The lower link's tangent is n=(cos b,-sin b). The complete foot velocity
+// can contain an upper-link normal component: project it out at release so
+// that the resulting shoe velocity is exactly perpendicular to the lower link.
+function launchState(q=state.q){const p=endPoint(q),b=q[1],nx=Math.cos(b),ny=-Math.sin(b),vTan=p.vx*nx+p.vy*ny;
+ const sign=Math.abs(vTan)>.05?Math.sign(vTan):(Math.abs(q[3])>.05?Math.sign(q[3]):1);
+ const speed=Math.abs(vTan)+PH.footKick;
+ return {...p,vx:sign*nx*speed,vy:sign*ny*speed,nx:sign*nx,ny:sign*ny,baseSpeed:Math.abs(vTan),speed}}
+
+function hitPrediction(p){let t=(-p.vy+Math.sqrt(p.vy*p.vy+2*PH.g*(PH.h-p.y)))/PH.g;if(!Number.isFinite(t)||t<0)t=0;return {x:p.x+p.vx*t,t,dx:p.vx*t}}
+function fmt(v){return Number(v).toFixed(2)}
+function speak(){} // Gameplay is intentionally free of text notifications.
+// A stroke applies a rightward horizontal impulse at the seat. The virtual
+// work is W = Fx * vx * dt * positionEfficiency * recovery, which is NEGATIVE
+// if the seat is moving against the stroke. We solve the impulse exactly for
+// that prescribed W, rather than awarding the always-positive J^2/2M term
+// that made 20 rapid taps unconditionally increase the energy in v0.3.
+function clamp(v,lo=0,hi=1){return Math.max(lo,Math.min(hi,v))}
+function pumpConditions(q=state.q,elapsed=state.simTime-state.lastKick){
+ const p=seatPoint(q),downwardness=p.y/(PH.l1+PH.l2);
+ // Lower-half passage is the efficient part of a normal pumping stroke.
+ const phase=clamp((downwardness-.38)/.62)**2;
+ // A hard stroke takes time to reset: quick taps still consume one attempt.
+ const recovery=clamp((elapsed-.20)/.86);
+ const direction=p.vx;
+ // Rider strokes become less effective at very high pendulum energy.
+ // This smoothly softens pumping rather than artificially clamping angles.
+ // A finite amount of work can be performed in a single body movement.
+ const totalEnergy=energy(q);
+ const effort=1/(1+Math.pow(totalEnergy/PH.energyScale,3));
+ const suppliedWork=PH.pumpForce*PH.strokeTime*direction*phase*recovery*effort;
+ const rawWork=Math.sign(suppliedWork)*Math.min(PH.maxStrokeWork,Math.abs(suppliedWork));
+ // A single horizontal impulse cannot remove more than the kinetic energy in
+ // the controlled seat velocity mode. Apply a safety margin to prevent reversal.
+ const [a,b]=q,{diag1,diag2,c,det}=matrix(q),J1=PH.l1*Math.cos(a),J2=PH.l2*Math.cos(b);
+ const response1=(diag2*J1-c*J2)/det,response2=(diag1*J2-c*J1)/det;
+ const invMass=J1*response1+J2*response2;
+ const removable=direction<0?.82*direction*direction/(2*invMass):Infinity;
+ const work=direction<0?Math.max(rawWork,-removable):rawWork;
+ return {phase,recovery,direction,work,J1,J2,response1,response2,invMass};
+}
+function pump(){if(state.phase!=='swing'||state.kick>=MAX)return;
+ const gap=state.simTime-state.lastKick;
+ // Mechanical switch debounce only; inputs closer than this are one touch.
+ if(gap<.075)return;
+ const before=energy(state.q),c=pumpConditions();
+ let impulse=0;
+ if(Math.abs(c.work)>1e-10 && Math.abs(c.direction)>1e-8){
+   const root=Math.sqrt(Math.max(0,c.direction*c.direction+2*c.invMass*c.work));
+   // Choose the non-reversing impulse branch: positive for forward/retrograde strokes.
+   impulse=c.direction>0?2*c.work/(c.direction+root):2*c.work/(c.direction-root);
+   state.q[2]+=impulse*c.response1;
+   state.q[3]+=impulse*c.response2;
+ }
+ const delta=energy(state.q)-before;
+ state.kick++;state.lastKick=state.simTime;
+ // An input affects the physics, but never produces a score or timing label.
+ updateControls();
+}
+function shoot(){if(state.phase!=='swing'||state.kick!==MAX)return;
+ const p=launchState();state.shoe={x:p.x,y:p.y,vx:p.vx,vy:p.vy,angle:Math.atan2(p.vy,p.vx),startX:p.x,startY:p.y,baseSpeed:p.baseSpeed,footKick:PH.footKick};
+ state.phase='flying';state.trail=[{x:p.x,y:p.y}];state.announced=false;state.peakSpeed=p.speed;
+ updateControls();
+}
+function reset(){state=initial();accumulator=0;lastFrame=0;
+ $('result').classList.remove('show');$('result').setAttribute('aria-hidden','true');
+ updateControls();render(now);
+}
+function updateControls(){const n=MAX-state.kick;
+ $('pump').disabled=state.phase!=='swing'||n===0;
+ $('throw').disabled=state.phase!=='swing'||n!==0;
+ $('strokeCount').textContent=state.kick+'/'+MAX;
+ $('controls').classList.toggle('hidden',state.phase==='landed');
+}
+function publicGameUrl(){
+ // Only attach a playable web address if this file is actually published.
+ if(!/^https?:$/.test(location.protocol))return '';
+ const host=location.hostname.toLowerCase();
+ if(host==='localhost'||host==='127.0.0.1'||host==='0.0.0.0'||
+    host.endsWith('.openai.com')||host.endsWith('.chatgpt.com')||
+    host==='chatgpt.com'||host.includes('sandbox'))return '';
+ return location.origin+location.pathname;
+}
+function makeShareUrl(distance){
+ // If hosted on GitHub Pages, the page's actual public URL is already known.
+ // When opened as a downloaded file, there is no real public game URL to share.
+ const url=publicGameUrl();
+ const text=`二重振り子ブランコ靴飛ばしに挑戦！\n飛距離：${distance>=0?'+':''}${fmt(distance)} m 👟\nあなたも挑戦してみて！${url?'\n'+url:''}\n#二重振り子ブランコ靴飛ばし #靴飛ばし`;
+ return 'https://twitter.com/intent/tweet?'+new URLSearchParams({text}).toString();
+}
+function land(){
+ const s=state.shoe;state.phase='landed';state.landing=s.x-s.startX;
+ state.crater={x:s.x,width:0.37+Math.min(1.50,Math.sqrt(Math.abs(state.landing))*.125),depth:.10+Math.min(.53,Math.sqrt(Math.abs(state.landing))*.047),time:state.simTime};
+ state.shake=7+Math.min(18,Math.abs(state.landing)*.17);
+ state.impactSpeed=Math.hypot(s.vx,s.vy);spawnDust();
+ const distance=state.landing,positive=Math.max(0,distance),record=positive>best+.00001;
+ if(record)setBest(positive);
+ $('resultDistance').textContent=(distance>=0?'+':'')+fmt(distance)+' m';
+ $('newRecord').hidden=!record;
+ $('share').href=makeShareUrl(distance);
+ $('result').classList.add('show');$('result').setAttribute('aria-hidden','false');
+ updateControls();
+}
+function random01(n){const x=Math.sin(n*127.1+78.233)*43758.5453;return x-Math.floor(x)}
+function spawnDust(){const c=state.crater;if(!c)return;const amount=30+Math.min(48,Math.floor(Math.abs(state.landing)*.24));state.dust=[];
+ for(let i=0;i<amount;i++){const r=random01(i+13),a=Math.PI*(1.09+random01(i+76)*.82),sp=1.2+random01(i+246)*(2.1+Math.min(5,Math.abs(state.landing)*.045));
+ state.dust.push({x:c.x+(r-.5)*c.width*.75,y:PH.h,vx:Math.cos(a)*sp,vy:Math.sin(a)*sp,age:0,ttl:.9+random01(i+334)*1.4,size:2+random01(i+810)*5,color:i%3===0?'#e5b886':i%3===1?'#b98c66':'#8c7365'});}}
+function step(dt){state.simTime+=dt;state.q=rk4(state.q,dt);
+ // Both links remain free to rotate; quadratic drag softens runaway speeds.
+ state.q[2]=Math.max(-29,Math.min(29,state.q[2]));state.q[3]=Math.max(-42,Math.min(42,state.q[3]));
+ if(state.simTime-state.lastTrailTime>.033){const sp=seatPoint();state.seatTrail.push({x:sp.x,y:sp.y,t:state.simTime});state.lastTrailTime=state.simTime;if(state.seatTrail.length>165)state.seatTrail.shift()}
+ if(state.phase==='flying'){
+   const p=state.shoe,ox=p.x,oy=p.y,ovy=p.vy;
+   p.x+=p.vx*dt;p.y+=ovy*dt+.5*PH.g*dt*dt;p.vy+=PH.g*dt;
+   if(state.trail.length===0||Math.hypot(p.x-state.trail[state.trail.length-1].x,p.y-state.trail[state.trail.length-1].y)>.11){state.trail.push({x:p.x,y:p.y});if(state.trail.length>340)state.trail.shift()}
+   if(p.y>=PH.h){const left=PH.h-oy,t=(-ovy+Math.sqrt(Math.max(0,ovy*ovy+2*PH.g*left)))/PH.g;p.x=ox+p.vx*Math.min(dt,Math.max(0,t));p.y=PH.h;p.angle=Math.atan2(p.vy,p.vx);land()}
+ }
+ if(state.phase==='flying'){const p=state.shoe;const targetX=p.x-(W*.52-PIVOT_PX)/SCALE+Math.max(-1.3,Math.min(1.3,p.vx*.032));
+ const targetY=p.y-(H*.45-PIVOT_PY)/SCALE;
+ const rate=11+Math.min(24,Math.abs(p.vx)*.40),follow=1-Math.exp(-rate*dt);
+ state.cam+=(targetX-state.cam)*follow;state.camY+=(targetY-state.camY)*(1-Math.exp(-Math.max(6,rate*.65)*dt));
+ }else if(state.phase==='landed'){const p=state.shoe;const tx=p.x-(W*.52-PIVOT_PX)/SCALE,ty=p.y-(H*.73-PIVOT_PY)/SCALE;
+ const f=1-Math.exp(-4*dt);state.cam+=(tx-state.cam)*f;state.camY+=(ty-state.camY)*f;
+ }
+ if(state.phase==='flying')state.peakSpeed=Math.max(state.peakSpeed,Math.hypot(state.shoe.vx,state.shoe.vy));
+ for(const p of state.dust){p.age+=dt;p.x+=p.vx*dt;p.y+=p.vy*dt;p.vy+=PH.g*.88*dt;p.vx*=1-dt*.7}
+ state.dust=state.dust.filter(p=>p.age<p.ttl);
+ state.shake*=Math.exp(-8*dt);if(state.shake<.04)state.shake=0;
+}
+function resize(){
+ const box=canvas.getBoundingClientRect(),width=Math.max(1,box.width),height=Math.max(1,box.height),aspect=width/height;
+ // Preserve the original gameplay scale. Extend the rendered world sideways on
+ // wide screens or vertically on portrait screens, rather than stretching it.
+ W=Math.max(BASE_W,BASE_H*aspect);
+ H=Math.max(BASE_H,BASE_W/aspect);
+ PIVOT_PX=270+(W-BASE_W)*.5;
+ PIVOT_PY=62+(H-BASE_H)*.52;
+ dpr=Math.min(window.devicePixelRatio||1,2);
+ const w=Math.round(width*dpr),h=Math.round(height*dpr);
+ if(canvas.width!==w||canvas.height!==h){canvas.width=w;canvas.height=h}
+}
+function rgba(r,g,b,a){return `rgba(${r},${g},${b},${a})`}
+function roundRect(x,y,w,h,r,fill,stroke,lw=1){ctx.beginPath();ctx.roundRect(x,y,w,h,r);if(fill){ctx.fillStyle=fill;ctx.fill()}if(stroke){ctx.lineWidth=lw;ctx.strokeStyle=stroke;ctx.stroke()}}
+function line(x1,y1,x2,y2,color,width=2,dash=[]){ctx.beginPath();ctx.setLineDash(dash);ctx.moveTo(x1,y1);ctx.lineTo(x2,y2);ctx.strokeStyle=color;ctx.lineWidth=width;ctx.stroke();ctx.setLineDash([])}
+function world(x,y){return{x:PIVOT_PX+(x-state.cam)*SCALE,y:PIVOT_PY+(y-state.camY)*SCALE}}
+function groundY(){return PIVOT_PY+(PH.h-state.camY)*SCALE}
+function craterDepthAt(x){const c=state.crater;if(!c)return 0;const q=(x-world(c.x,PH.h).x)/(c.width*SCALE);if(Math.abs(q)>=1)return 0;return c.depth*SCALE*Math.pow(1-q*q,1.22)}
+function cloud(x,y,s,alpha){ctx.save();ctx.translate(x,y);ctx.scale(s,s);ctx.globalAlpha=alpha;ctx.fillStyle='#afcee1';
+ for(const [xx,yy,rx,ry] of [[-44,4,32,13],[-19,-3,27,21],[6,-11,33,25],[30,2,35,16],[52,7,25,10]]){
+ ctx.beginPath();ctx.ellipse(xx,yy,rx,ry,0,0,TAU);ctx.fill()}
+ ctx.globalAlpha=alpha*.65;ctx.fillStyle='#edf7ff';ctx.beginPath();ctx.ellipse(-2,-15,23,10,0,Math.PI,TAU);ctx.fill();ctx.restore()}
+function mountains(ground,layer,color,freq,height,parallax,phase){ctx.fillStyle=color;ctx.beginPath();ctx.moveTo(0,H+20);
+ for(let x=0;x<=W+25;x+=15){const wx=x+state.cam*SCALE*parallax;const z=ground-height+25*Math.sin(wx*freq+phase)+14*Math.sin(wx*freq*2.1+phase*.7);ctx.lineTo(x,z)}
+ ctx.lineTo(W+5,H+10);ctx.closePath();ctx.fill()}
+function backdrop(t){const ground=groundY();let bg=ctx.createLinearGradient(0,0,0,H);bg.addColorStop(0,'#0a1632');bg.addColorStop(.54,'#1b3558');bg.addColorStop(1,'#31586b');ctx.fillStyle=bg;ctx.fillRect(0,0,W,H);
+ const halo=ctx.createRadialGradient(W*.72,95,5,W*.72,95,490);halo.addColorStop(0,'#557d9f42');halo.addColorStop(1,'#385a8400');ctx.fillStyle=halo;ctx.fillRect(0,0,W,H);
+ for(const st of stars){const x=((st.x-state.cam*SCALE*.06)%W+W)%W,y=((st.y*(H/BASE_H)-state.camY*SCALE*.035)%(H*.73)+(H*.73))%(H*.73);
+ ctx.fillStyle=rgba(207,230,255,.24+.22*Math.sin(t*.0014+st.phase));ctx.beginPath();ctx.arc(x,y,st.r,0,TAU);ctx.fill()}
+ // Parallax clouds use a world-space pattern with independent wind drift.
+ for(let i=0;i<20;i++){const drift=(i%2?1:-1)*state.simTime*(3.5+i%4*1.8);
+ const x=((i*247+41+drift-state.cam*SCALE*(.12+(i%4)*.058))%1600+1600)%1600-230;
+ const y=38+(i*137)%Math.max(230,H*.64)-state.camY*SCALE*(.07+(i%3)*.022);
+ cloud(x,y,.45+(i%4)*.22,.14+(i%3)*.075)}
+ mountains(ground,1,'#243c55',.009,143, .15,2);
+ mountains(ground,2,'#2b4a5c',.014,97, .30,1);
+ mountains(ground,3,'#28484e',.023,45, .60,3);
+ if(ground>H+220)return;
+ ctx.fillStyle='#183039';ctx.beginPath();ctx.moveTo(0,H+15);
+ const stepX=6;for(let x=0;x<=W+stepX;x+=stepX){ctx.lineTo(x,ground+craterDepthAt(x))}
+ ctx.lineTo(W,H+15);ctx.closePath();ctx.fill();
+ // Small raised dirt rim at the crater edge.
+ if(state.crater){const c=state.crater,px=world(c.x,PH.h).x,r=c.width*SCALE;
+ ctx.beginPath();ctx.moveTo(px-r*1.25,ground+1);ctx.quadraticCurveTo(px-r,ground-7,px-r*.8,ground+4);ctx.lineTo(px+r*.8,ground+4);ctx.quadraticCurveTo(px+r,ground-7,px+r*1.25,ground+1);ctx.strokeStyle='#8d7354';ctx.lineWidth=4;ctx.stroke();
+ ctx.beginPath();ctx.ellipse(px,ground+c.depth*SCALE*.61,r*.83,c.depth*SCALE*.5,0,0,TAU);ctx.fillStyle='#0d2025b9';ctx.fill();
+ ctx.beginPath();ctx.moveTo(px-r,ground);for(let n=0;n<=26;n++){let x=px-r+2*r*n/26;ctx.lineTo(x,ground+craterDepthAt(x))}ctx.strokeStyle='#b18a67';ctx.lineWidth=4;ctx.stroke()}
+ ctx.strokeStyle='#557b6b';ctx.lineWidth=3;ctx.beginPath();for(let x=0;x<=W+6;x+=6){const y=ground+craterDepthAt(x);x===0?ctx.moveTo(x,y):ctx.lineTo(x,y)}ctx.stroke();
+ for(let i=0;i<140;i++){let seed=i*19.17,wx=(((i*83.1-state.cam*SCALE)% (W+140))+(W+140))%(W+140)-70,y=ground+18+((i*37)%130);
+ if(y>=0&&y<H){ctx.fillStyle=i%3===0?'#4e6b5a':'#2d4a46';ctx.fillRect(wx,y,2+(i%5),1+(i%2))}}
+ const origin=world(0,PH.h).x;const minM=Math.floor((-20-origin)/SCALE/10)*10;const maxM=Math.ceil((W+20-origin)/SCALE/10)*10;
+ for(let m=minM;m<=maxM;m+=2){let x=origin+m*SCALE;if(x<-10||x>W+10)continue;
+ const y=ground+craterDepthAt(x);line(x,y,x,y+(m%10===0?14:7),'#678b8d',m%10===0?2:1);
+ }
+}
+function windStreaks(){if(state.phase!=='flying')return;const s=state.shoe,speed=Math.hypot(s.vx,s.vy),strength=Math.min(1,Math.max(0,(speed-8)/32));if(strength<=0)return;
+ ctx.save();ctx.lineCap='round';for(let i=0;i<38;i++){let u=random01(i+49),v=random01(i+202),phase=(state.simTime*(.22+speed*.011)*(i%3+1)*.3+i*.13)%1;
+ let x=((u*W-phase*W)% (W+80)+W+80)%(W+80),y=v*H;
+ let len=(18+random01(i+405)*100)*strength,dir=Math.sign(s.vx)||1;
+ line(x,y,x-dir*len,y-(s.vy/Math.max(3,Math.abs(s.vx)))*dir*len*.26,rgba(191,237,255,.09+.24*strength),1+(i%3)*.38)}ctx.restore();
+}
+function dustEffect(){if(!state.dust.length)return;for(const p of state.dust){const pos=world(p.x,p.y),fade=Math.max(0,1-p.age/p.ttl);ctx.globalAlpha=fade*.85;ctx.beginPath();ctx.arc(pos.x,pos.y,p.size*(1+p.age*.8),0,TAU);ctx.fillStyle=p.color;ctx.fill()}ctx.globalAlpha=1}
+function swingFrame(){let p=world(0,0),gx=world(0,PH.h).x,GROUND_Y=groundY();
+ const left=gx-157,right=gx+157;
+ line(gx-72,p.y+13,left,GROUND_Y-2,'#294456',14);line(gx+72,p.y+13,right,GROUND_Y-2,'#294456',14);
+ line(gx-72,p.y+13,left,GROUND_Y-2,'#52768b',4);line(gx+72,p.y+13,right,GROUND_Y-2,'#52768b',4);
+ line(gx-99,p.y+3,gx+99,p.y+3,'#19283f',15);line(gx-99,p.y,gx+99,p.y,'#a4b8c6',5);
+ roundRect(gx-113,p.y-5,226,12,5,'#506b83','#152740',1.5);
+ ctx.beginPath();ctx.arc(p.x,p.y,10,0,TAU);ctx.fillStyle='#9cb4c9';ctx.fill();ctx.beginPath();ctx.arc(p.x,p.y,4,0,TAU);ctx.fillStyle='#243d59';ctx.fill();
+}
+function sneaker(x,y,angle,scale=1){ctx.save();ctx.translate(x,y);ctx.rotate(angle);ctx.scale(scale,scale);
+ // Shoe pointing toward the right; orange upper, light sole, white laces.
+ ctx.shadowColor='#ffab6f7d';ctx.shadowBlur=10;ctx.beginPath();ctx.moveTo(-15,-8);ctx.quadraticCurveTo(-8,-16,1,-10);ctx.lineTo(10,-5);ctx.quadraticCurveTo(23,-5,22,5);ctx.quadraticCurveTo(7,12,-12,9);ctx.quadraticCurveTo(-18,4,-15,-8);ctx.closePath();ctx.fillStyle='#ff9457';ctx.fill();ctx.shadowBlur=0;
+ ctx.strokeStyle='#ffe9da';ctx.lineWidth=2;line(-4,-6,-.5,-1,'#ffeddf',1.8);line(1,-6,4,-1,'#ffeddf',1.8);line(6,-4,9,0,'#ffeddf',1.8);
+ ctx.beginPath();ctx.moveTo(-18,7);ctx.quadraticCurveTo(0,13,22,7);ctx.quadraticCurveTo(23,12,18,14);ctx.lineTo(-14,14);ctx.quadraticCurveTo(-20,12,-18,7);ctx.fillStyle='#f2f4ee';ctx.fill();ctx.restore();}
+function rider(){const a=state.q[0],b=state.q[1],p=world(0,0),mid=world(PH.l1*Math.sin(a),PH.l1*Math.cos(a)),seat=seatPoint(),chair=world(seat.x,seat.y),shoe=endPoint(),foot=world(shoe.x,shoe.y);
+ // The two physically simulated chain links are pivot → midpoint → seat.
+ // Parallel strands are decorative; both ends of each segment remain fixed-distance.
+ const rope=(p1,p2,angle,half=5,color='#add3e2')=>{const ox=Math.cos(angle)*half,oy=-Math.sin(angle)*half;
+  for(const s of [-1,1]){line(p1.x+s*ox,p1.y+s*oy,p2.x+s*ox,p2.y+s*oy,'#0a2236',7);line(p1.x+s*ox,p1.y+s*oy,p2.x+s*ox,p2.y+s*oy,color,2.8)}};
+ rope(p,mid,a,5,'#add3e2');rope(mid,chair,b,5,'#6cf6d2');
+ ctx.beginPath();ctx.arc(mid.x,mid.y,11,0,TAU);ctx.fillStyle='#ebbb81';ctx.fill();ctx.strokeStyle='#344d63';ctx.lineWidth=3;ctx.stroke();
+ ctx.beginPath();ctx.arc(mid.x,mid.y,3.5,0,TAU);ctx.fillStyle='#243b50';ctx.fill();
+ // Seat and rider are attached to the second pendulum's endpoint, not the hinge.
+ ctx.save();ctx.translate(chair.x,chair.y);
+ roundRect(-28,-6,56,13,4,'#ffad69','#6b432f',2);
+ line(-7,-7,-11,-39,'#62d9dd',16);line(-8,-9,-12,-38,'#a0e9ea',5);
+ ctx.beginPath();ctx.arc(-14,-55,17,0,TAU);ctx.fillStyle='#f2c6a4';ctx.fill();
+ ctx.beginPath();ctx.arc(-14,-59,17,Math.PI,TAU);ctx.fillStyle='#24334a';ctx.fill();
+ ctx.fillStyle='#24334a';ctx.beginPath();ctx.arc(-7,-54,2,0,TAU);ctx.fill();
+ ctx.restore();
+ // Legs extend beyond the seat; they are not an additional simulated pendulum.
+ line(chair.x-5,chair.y+1,foot.x-5,foot.y,'#12465f',11);line(chair.x-5,chair.y+1,foot.x-5,foot.y,'#68deda',5);
+ ctx.beginPath();ctx.arc(chair.x,chair.y,6,0,TAU);ctx.fillStyle='#e6c5a2';ctx.fill();
+ if(state.phase==='swing')sneaker(foot.x,foot.y,Math.atan2(-Math.sin(b),Math.cos(b))*.35,1.12);
+ else{ctx.beginPath();ctx.arc(foot.x,foot.y,7,0,TAU);ctx.fillStyle='#e9edf5';ctx.fill()}
+}
+function seatTrace(){const v=state.seatTrail;if(v.length<2)return;
+ for(let i=1;i<v.length;i++){const age=state.simTime-v[i].t;if(age>4.0)continue;
+ const a=world(v[i-1].x,v[i-1].y),b=world(v[i].x,v[i].y);
+ ctx.globalAlpha=.25*(1-age/4);line(a.x,a.y,b.x,b.y,'#58edec',2.1)}ctx.globalAlpha=1
+}
+function aimArrow(){if(state.phase!=='swing'||state.kick!==MAX)return;
+ const p=launchState(),a=world(p.x,p.y),b=world(p.x+p.nx*.68,p.y+p.ny*.68),ang=Math.atan2(b.y-a.y,b.x-a.x);
+ line(a.x,a.y,b.x,b.y,'#fff2a0',4);
+ for(const d of [-1,1])line(b.x,b.y,b.x-12*Math.cos(ang+d*.52),b.y-12*Math.sin(ang+d*.52),'#fff2a0',3);
+}
+function throwTrail(){if(!state.shoe)return;const GROUND_Y=groundY();
+ let tr=state.trail;
+ if(tr.length>1){ctx.beginPath();for(let i=0;i<tr.length;i++){const p=world(tr[i].x,tr[i].y);i===0?ctx.moveTo(p.x,p.y):ctx.lineTo(p.x,p.y)}ctx.setLineDash([5,7]);ctx.lineWidth=2;ctx.strokeStyle='#ffc189a0';ctx.stroke();ctx.setLineDash([])}
+ const p=state.shoe,q=world(p.x,p.y),prev=state.phase==='landed'?Math.atan2(p.vy,p.vx):Math.atan2(p.vy,p.vx);sneaker(q.x,state.phase==='landed'?q.y+craterDepthAt(q.x)*.47:q.y,prev*.55,1.15);
+ if(state.phase==='landed'){ctx.save();ctx.strokeStyle='#ffe0b4';ctx.lineWidth=2;for(let i=0;i<9;i++){let r=i*Math.PI/4.5;line(q.x+Math.cos(r)*19,q.y-9+Math.sin(r)*7,q.x+Math.cos(r)*28,q.y-12+Math.sin(r)*13,'#ffa45e83',2)}ctx.restore()}
+ let from=world(p.startX,PH.h),to=world(p.x,PH.h);if(state.phase==='landed'&&from.x>=0&&from.x<=W&&to.x>=0&&to.x<=W){line(from.x,GROUND_Y-9,to.x,GROUND_Y-9,'#ffa45e75',3)}
+}
+function render(time){resize();ctx.setTransform(canvas.width/W,0,0,canvas.height/H,0,0);ctx.clearRect(0,0,W,H);ctx.save();if(state.shake){ctx.translate((Math.random()-.5)*state.shake,(Math.random()-.5)*state.shake)}backdrop(time);windStreaks();if(state.phase==='swing'){swingFrame();seatTrace();rider();aimArrow()}else if(state.phase==='flying' || state.phase==='landed'){if(Math.abs(state.cam)<10&&Math.abs(state.camY)<9){swingFrame();seatTrace();rider()}}throwTrail();dustEffect();ctx.restore()}
+function tick(ts){if(!lastFrame)lastFrame=ts;let dt=Math.min((ts-lastFrame)/1000,.05);lastFrame=ts;now=ts;
+ accumulator+=dt;let n=0;while(accumulator>=1/240&&n<24){step(1/240);accumulator-=1/240;n++}if(n===24)accumulator=0;
+ render(ts);requestAnimationFrame(tick)}
+$('pump').addEventListener('click',pump);
+$('throw').addEventListener('click',shoot);
+$('again').addEventListener('click',reset);
+window.addEventListener('keydown',e=>{
+ if(e.repeat)return;
+ if(e.code==='Space'){e.preventDefault();pump()}
+ else if(e.code==='Enter'&&state.phase==='swing'){e.preventDefault();shoot()}
+ else if(e.code==='KeyR'){reset()}
+});
+window.addEventListener('resize',()=>render(performance.now()));
+reset();requestAnimationFrame(tick);
+})();
+</script>
+</body>
+</html>
